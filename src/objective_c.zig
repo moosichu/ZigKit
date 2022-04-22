@@ -20,6 +20,139 @@ pub const SEL = *objc_selector;
 const objc_selector = opaque {};
 pub const IMP = getFunctionPointer(fn (id, SEL, ...) callconv(.C) id);
 
+fn encodeSize(comptime objc_type: type, indirection: comptime_int) comptime_int {
+    const type_info = @typeInfo(objc_type);
+    switch (type_info) {
+        .Int, .Float, .Bool => return 1,
+        .Struct => |struct_info| {
+            if (struct_info.layout != .Extern) {
+                @compileError(@tagName(struct_info.layout) ++ " struct not supported - please declare as extern!");
+            }
+
+            comptime var result = @typeName(objc_type).len + 2;
+            if (indirection <= 1) {
+                result += 1;
+                inline for (struct_info.fields) |field| {
+                    result += encodeSize(field.field_type, indirection + 1);
+                }
+            }
+            return result;
+        },
+        .Pointer => |pointer_info| {
+            if (pointer_info.child == objc_object) {
+                // maps to @
+                return 1;
+            }
+            switch (@typeInfo(pointer_info.child)) {
+                // char * (string) type is special!
+                .Int => |int_info| switch (int_info.bits) {
+                    @bitSizeOf(u8) => return 1,
+                    else => {},
+                },
+                .Opaque, .Void => return 1,
+                else => {},
+            }
+            return 1 + encodeSize(pointer_info.child, indirection + 1);
+        },
+        else => {
+            @compileError("Cannot encode type " ++ @typeName(objc_type) ++ ".");
+        },
+    }
+}
+
+fn copyArray(comptime left_slice: anytype, comptime right_slice: anytype) void {
+    for (right_slice) |char, index| {
+        left_slice[index] = char;
+    }
+}
+
+fn encodeLiteral(comptime objc_type: type, comptime len: comptime_int, indirection: comptime_int) *const [len:0]u8 {
+    const type_info = @typeInfo(objc_type);
+
+    switch (type_info) {
+        .Int => |int_info| {
+            switch (int_info.signedness) {
+                .signed => switch (int_info.bits) {
+                    @bitSizeOf(i8) => return "c",
+                    @bitSizeOf(c_int) => return "i",
+                    @bitSizeOf(c_short) => return "s",
+                    @bitSizeOf(c_long) => return "l",
+                    @bitSizeOf(c_longlong) => return "q",
+                    else => @compileError("Unsupported integer bit count."),
+                },
+                .unsigned => switch (int_info.bits) {
+                    @bitSizeOf(u8) => return "C",
+                    @bitSizeOf(c_uint) => return "I",
+                    @bitSizeOf(c_ushort) => return "S",
+                    @bitSizeOf(c_ulong) => return "L",
+                    @bitSizeOf(c_ulonglong) => return "Q",
+                    else => @compileError("Unsupported integer bit count."),
+                },
+            }
+        },
+        .Float => |float_info| switch (float_info.bits) {
+            @bitSizeOf(f32) => return "f",
+            @bitSizeOf(f64) => return "d",
+        },
+        .Bool => return "B",
+        .Void => "v",
+        // TODO: a character string char * is a special case!
+        // TODO: a statically typed (id) object
+        // TODO: class object
+        // TODO: a method selector
+        // TODO: an array
+        .Struct => |struct_info| comptime {
+            if (indirection <= 1) {
+                comptime var result: [len:0]u8 = undefined;
+                const type_string = "{" ++ @typeName(objc_type) ++ "=";
+                copyArray(&result, type_string);
+                comptime var current_index = type_string.len;
+                inline for (struct_info.fields) |field| {
+                    const sub_encode = encodeInternal(field.field_type, indirection + 1);
+                    copyArray(result[current_index..], sub_encode);
+                    current_index += sub_encode.len;
+                }
+                copyArray(result[current_index..], "}");
+                return &result;
+            }
+            return "{" ++ @typeName(objc_type) ++ "}";
+        },
+        .Pointer => |pointer_info| {
+            if (pointer_info.child == objc_object) {
+                return "@";
+            }
+            switch (@typeInfo(pointer_info.child)) {
+                // char * (string) type is special!
+                .Int => |int_info| switch (int_info.bits) {
+                    @bitSizeOf(u8) => return "*",
+                    else => {},
+                },
+                .Opaque, .Void => return "?",
+                else => {},
+            }
+            return "^" ++ encodeInternal(pointer_info.child, indirection + 1);
+        },
+        // TODO: a union
+        // TODO: a bitfield
+        else => {},
+    }
+
+    // Unencodable type - all errors should have been handled in encodeSize with
+    // nice messages!
+    unreachable;
+}
+
+fn encodeInternal(comptime objc_type: type, indirection: comptime_int) [:0]const u8 {
+    const encode_size = encodeSize(objc_type, indirection);
+    return encodeLiteral(objc_type, encode_size, indirection);
+}
+
+/// Encode a type as an objective-c type string
+/// See: https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html#//apple_ref/doc/uid/TP40008048-CH100
+pub fn encode(comptime objc_type: type) [:0]const u8 {
+    return encodeInternal(objc_type, 0);
+}
+
 pub const Class = *allowzero objc_class;
 pub const Nil: Class = @intToPtr(Class, 0);
 pub const objc_class = opaque {
@@ -135,6 +268,29 @@ test {
     _ = testing.refAllDecls(objc_class);
     _ = testing.refAllDecls(objc_object);
     _ = testing.refAllDecls(objc_ivar);
+}
+
+test "encode" {
+    try testing.expectEqualStrings(encode(i8), "c");
+    try testing.expectEqualStrings(encode(u8), "C");
+    try testing.expectEqualStrings(encode(c_long), "l");
+    {
+        const test_struct = extern struct {
+            a: c_uint,
+        };
+        try testing.expectEqualStrings(encode(test_struct), "{test_struct=I}");
+    }
+    {
+        const example = extern struct {
+            an_object: id,
+            a_string: [*:0]u8,
+            an_int: i32,
+        };
+        try testing.expectEqualStrings(encode(example), "{example=@*i}");
+        try testing.expectEqualStrings(encode(*example), "^{example=@*i}");
+        // testing layers of indirection!
+        try testing.expectEqualStrings(encode(**example), "^^{example}");
+    }
 }
 
 test "Nil tests" {
