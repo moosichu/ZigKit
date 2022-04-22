@@ -6,13 +6,7 @@ const testing = std.testing;
 
 const Allocator = mem.Allocator;
 
-// A workaround until stage 2 is shipped
-fn getFunctionPointer(comptime function_type: type) type {
-    return switch (builtin.zig_backend) {
-        .stage1 => function_type,
-        else => *const function_type,
-    };
-}
+const getFunctionPointer = @import("shared.zig").getFunctionPointer;
 
 // Basic types
 pub const CFIndex = c_long;
