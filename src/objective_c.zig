@@ -154,12 +154,12 @@ pub fn encode(comptime objc_type: type) type_encoding {
     return encodeInternal(objc_type, 0);
 }
 
-const Interface = struct {};
+pub fn lookUpClass(name: [:0]const u8) Class {
+    return objc_lookUpClass(name);
+}
 
-pub fn interface(comptime declaration: type, comptime parent: Interface) Interface {
-    _ = declaration;
-    _ = parent;
-    unreachable;
+pub fn getClass(name: [:0]const u8) id {
+    return objc_getClass(name);
 }
 
 // Note: no need for wrappers as these "shouldn't" be called anyway
@@ -177,8 +177,8 @@ extern "C" fn objc_destructInstance(obj: id) *anyopaque;
 
 // extern "C" fn objc_getClassList() void;
 // extern "C" fn objc_copyClassList() void;
-// extern "C" fn objc_lookUpClass() void;
-// extern "C" fn objc_getClass() void;
+extern "C" fn objc_lookUpClass(name: [*:0]const u8) Class;
+extern "C" fn objc_getClass(name: [*:0]const u8) id;
 // extern "C" fn objc_getRequiredClass() void;
 // extern "C" fn objc_getMetaClass() void;
 
@@ -418,4 +418,80 @@ test "Nil tests" {
     try testing.expectEqual(Nil.getInstanceSize(), 0);
     try testing.expectEqual(Nil.getProperty(""), null);
     try testing.expectEqualSlices(objc_property_t_Nonnull, Nil.copyPropertyList(), &.{});
+}
+
+// TODO: Figure out how/if it's possible to init comptime datastructures for
+// registering Objective C classes at runtime.
+// const GlobalRef = struct {
+//     comptime objects_to_init: []UntypedInterface = &.{},
+// };
+// var global_ref: GlobalRef = .{};
+
+var NSObject = externInterface("NSObject");
+comptime {
+    // NSObject.register();
+}
+
+pub fn initRuntime() void {
+    // for (global_ref.objects_to_init) |object_to_init| {
+    //     object_to_init.initRuntime();
+    // }
+    NSObject.initRuntime();
+}
+
+pub fn interface(comptime declaration: type, comptime parent: Interface) Interface {
+    _ = declaration;
+    _ = parent;
+    unreachable;
+}
+
+pub const UntypedInterface = struct {
+    name: [:0]const u8,
+    class_ptr: *Class,
+
+    pub fn initRuntime(self: UntypedInterface) void {
+        self.class_ptr.* = lookUpClass(self.name);
+    }
+};
+
+pub fn Interface(comptime name_arg: [:0]const u8) type {
+    return struct {
+        // type: interfaceType(),
+        const name: [:0]const u8 = name_arg;
+        class: Class,
+
+        pub fn untypedInterface(self: *@This()) UntypedInterface {
+            return .{
+                .name = name,
+                .class_ptr = &self.class,
+            };
+        }
+
+        pub fn initRuntime(self: *@This()) void {
+            self.class = lookUpClass(name);
+        }
+
+        pub fn register(comptime self: *@This()) void {
+            _ = self;
+            // comptime var new_objects_to_init: [global_ref.objects_to_init.len + 1]UntypedInterface = undefined;
+            // inline for (global_ref.objects_to_init) |object_to_init, index| {
+            //     new_objects_to_init[index] = object_to_init;
+            // }
+            // new_objects_to_init[global_ref.objects_to_init.len] = self.untypedInterface();
+            // global_ref.objects_to_init = &new_objects_to_init;
+        }
+    };
+}
+
+pub fn externInterface(comptime name: [:0]const u8) Interface(name) {
+    const result = .{
+        .class = Nil,
+    };
+    return result;
+}
+
+test "Objects" {
+    initRuntime();
+    // const create
+    try testing.expect(NSObject.class != Nil);
 }
