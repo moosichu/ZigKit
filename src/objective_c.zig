@@ -162,6 +162,10 @@ pub fn getClass(name: [:0]const u8) id {
     return objc_getClass(name);
 }
 
+pub fn allocateClassPair(superclass: Class, name: [*:0]const u8, extra_bytes: usize) !Class {
+    return objc_allocateClassPair(superclass, name, extra_bytes);
+}
+
 // Note: no need for wrappers as these "shouldn't" be called anyway
 extern "C" fn objc_getFutureClass(name: ?[*:0]const u8) Class;
 extern "C" fn objc_setFutureClass(cls: Class, name: ?[*:0]const u8) void;
@@ -432,17 +436,11 @@ comptime {
     // NSObject.register();
 }
 
-pub fn initRuntime() void {
+pub fn initRuntime() !void {
     // for (global_ref.objects_to_init) |object_to_init| {
     //     object_to_init.initRuntime();
     // }
-    NSObject.initRuntime();
-}
-
-pub fn interface(comptime declaration: type, comptime parent: Interface) Interface {
-    _ = declaration;
-    _ = parent;
-    unreachable;
+    try NSObject.initRuntime();
 }
 
 pub const UntypedInterface = struct {
@@ -454,21 +452,45 @@ pub const UntypedInterface = struct {
     }
 };
 
-pub fn Interface(comptime name_arg: [:0]const u8) type {
+pub const InterfaceCategoryTag = enum {
+    internal,
+    external,
+};
+
+const InterfaceCategory = union(InterfaceCategoryTag) {
+    internal: struct {
+        superclass_name: [:0]const u8,
+    },
+    external,
+};
+
+pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceCategory) type {
     return struct {
-        // type: interfaceType(),
-        const name: [:0]const u8 = name_arg;
-        class: Class,
+        const _interface_category: InterfaceCategory = interface_category;
+        const _name: [:0]const u8 = name_arg;
+        const _type: type = @This();
+        class: Class = Nil,
 
         pub fn untypedInterface(self: *@This()) UntypedInterface {
             return .{
-                .name = name,
+                .name = _name,
                 .class_ptr = &self.class,
             };
         }
 
-        pub fn initRuntime(self: *@This()) void {
-            self.class = lookUpClass(name);
+        pub fn initRuntime(self: *@This()) !void {
+            switch (_interface_category) {
+                .external => self.class = lookUpClass(_name),
+                .internal => |internal_info| {
+                    var superclass = lookUpClass(internal_info.superclass_name);
+                    self.class = try allocateClassPair(superclass, _name, 0);
+                },
+            }
+        }
+
+        pub fn Type(comptime self: *@This()) type {
+            _ = self;
+            return _type;
         }
 
         pub fn register(comptime self: *@This()) void {
@@ -483,15 +505,22 @@ pub fn Interface(comptime name_arg: [:0]const u8) type {
     };
 }
 
-pub fn externInterface(comptime name: [:0]const u8) Interface(name) {
-    const result = .{
-        .class = Nil,
-    };
-    return result;
+pub fn externInterface(comptime name: [:0]const u8) Interface(name, .external) {
+    return .{};
 }
 
+pub fn interface(comptime name: [:0]const u8, comptime declaration: type, comptime Parent: type) Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name } }) {
+    _ = declaration;
+    return .{};
+}
+
+var MyClass = interface("MyClass", struct {}, NSObject.Type());
+
 test "Objects" {
-    initRuntime();
+    try initRuntime();
+    try MyClass.initRuntime();
     // const create
     try testing.expect(NSObject.class != Nil);
+    try testing.expect(MyClass.class != Nil);
+    try testing.expect(MyClass.class.getSuperclass() == NSObject.class);
 }
