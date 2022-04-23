@@ -164,6 +164,19 @@ pub fn interface(comptime declaration: type, comptime parent: Interface) Interfa
     unreachable;
 }
 
+// Note: no need for wrappers as these "shouldn't" be called anyway
+extern "C" fn objc_getFutureClass(name: ?[*:0]const u8) Class;
+extern "C" fn objc_setFutureClass(cls: Class, name: ?[*:0]const u8) void;
+
+extern "C" fn objc_allocateClassPair(superclass: Class, name: [*:0]const u8, extra_bytes: usize) Class;
+extern "C" fn objc_disposeClassPair(cls: Class) void;
+extern "C" fn objc_registerClassPair(cls: Class) void;
+// Note: no need for wrappers as this "shouldn't" be called anyway
+extern "C" fn objc_duplicateClassPair(original: Class, name: [*:0]const u8, extra_bytes: usize) Class;
+
+extern "C" fn objc_constructInstance(cls: Class, bytes: *anyopaque) id;
+extern "C" fn objc_destructInstance(obj: id) *anyopaque;
+
 pub const Class = *allowzero objc_class;
 pub const Nil: Class = @intToPtr(Class, 0);
 pub const objc_class = opaque {
@@ -207,6 +220,15 @@ pub const objc_class = opaque {
         return result.?[0..out_count];
     }
 
+    pub fn constructInstance(cls: Class, bytes: []u8) id {
+        assert(cls.getInstanceSize() <= bytes.len);
+        // TODO; check alignment?
+        for (bytes) |byte| {
+            assert(byte == 0);
+        }
+        return objc_constructInstance(cls, @ptrCast(*anyopaque, bytes));
+    }
+
     extern "C" fn class_getName(cls: Class) [*:0]const u8;
     extern "C" fn class_getSuperclass(cls: Class) Class;
     extern "C" fn class_isMetaClass(cls: Class) BOOL;
@@ -245,24 +267,9 @@ pub const nil: id = @intToPtr(id, 0);
 pub const objc_object = extern struct {
     isa: Class,
 
-    pub fn constructInstance(cls: Class, bytes: []u8) id {
-        assert(cls.getInstanceSize() <= bytes.len);
-        // TODO; check alignment?
-        for (bytes) |byte| {
-            assert(byte == 0);
-        }
-        return objc_constructInstance(cls, @ptrCast(*anyopaque, bytes));
-    }
-
     pub fn destructInstance(obj: id) *anyopaque {
         return objc_destructInstance(obj);
     }
-
-    extern "C" fn objc_getFutureClass(name: ?[*:0]const u8) Class;
-    extern "C" fn objc_setFutureClass(cls: Class, name: ?[*:0]const u8) void;
-
-    extern "C" fn objc_constructInstance(cls: Class, bytes: *anyopaque) id;
-    extern "C" fn objc_destructInstance(obj: id) *anyopaque;
 };
 
 pub const Ivar = ?*objc_ivar;
