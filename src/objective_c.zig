@@ -16,8 +16,6 @@ const getFunctionPointer = @import("shared.zig").getFunctionPointer;
 pub const BOOL = i8;
 pub const YES: BOOL = 1;
 pub const NO: BOOL = 0;
-pub const SEL = *objc_selector;
-const objc_selector = opaque {};
 pub const IMP = getFunctionPointer(fn (id, SEL, ...) callconv(.C) id);
 
 pub const type_encoding = [:0]const u8;
@@ -177,6 +175,44 @@ extern "C" fn objc_duplicateClassPair(original: Class, name: [*:0]const u8, extr
 extern "C" fn objc_constructInstance(cls: Class, bytes: *anyopaque) id;
 extern "C" fn objc_destructInstance(obj: id) *anyopaque;
 
+// extern "C" fn objc_getClassList() void;
+// extern "C" fn objc_copyClassList() void;
+// extern "C" fn objc_lookUpClass() void;
+// extern "C" fn objc_getClass() void;
+// extern "C" fn objc_getRequiredClass() void;
+// extern "C" fn objc_getMetaClass() void;
+
+// extern "C" fn objc_setAssociatedObject() void;
+// extern "C" fn objc_getAssociatedObject() void;
+// extern "C" fn objc_removeAssociatedObjects() void;
+
+// extern "C" fn objc_msgSend() void;
+// extern "C" fn objc_msgSend_stret () void;
+// extern "C" fn objc_msgSendSuper () void;
+// extern "C" fn objc_msgSendSuper_stret () void;
+// extern "C" fn objc_msgSend() void;
+// extern "C" fn objc_msgSend_fpret() void;
+// extern "C" fn objc_msgSend_stret() void;
+// extern "C" fn objc_msgSendSuper() void;
+// extern "C" fn objc_msgSendSuper_stret() void;
+
+// extern "C" fn objc_copyImageNames() void;
+// extern "C" fn class_getImageName() void;
+// extern "C" fn objc_copyClassNamesForImage() void;
+
+// extern "C" fn objc_getProtocol() void;
+// extern "C" fn objc_copyProtocolList() void;
+// extern "C" fn objc_allocateProtocol() void;
+// extern "C" fn objc_registerProtocol() void;
+
+// extern "C" fn objc_enumerationMutation() void;
+// extern "C" fn objc_setEnumerationMutationHandler() void;
+// extern "C" fn imp_implementationWithBlock() void;
+// extern "C" fn imp_getBlock() void;
+// extern "C" fn imp_removeBlock() void;
+// extern "C" fn objc_loadWeak() void;
+// extern "C" fn objc_storeWeak() void;
+
 pub const Class = *allowzero objc_class;
 pub const Nil: Class = @intToPtr(Class, 0);
 pub const objc_class = opaque {
@@ -270,23 +306,78 @@ pub const objc_object = extern struct {
     pub fn destructInstance(obj: id) *anyopaque {
         return objc_destructInstance(obj);
     }
+
+    // extern "C" fn object_copy() void;
+    // extern "C" fn object_dispose() void;
+    // extern "C" fn object_setInstanceVariable() void;
+    // extern "C" fn object_getInstanceVariable() void;
+    // extern "C" fn object_getIndexedIvars() void;
+    // extern "C" fn object_getIvar() void;
+    // extern "C" fn object_setIvar() void;
+    // extern "C" fn object_getClassName() void;
+    // extern "C" fn object_getClass() void;
+    // extern "C" fn object_setClass() void;
+
 };
 
 pub const Ivar = ?*objc_ivar;
 pub const Ivar_Nonnull = *objc_ivar;
-pub const objc_ivar = opaque {};
+pub const objc_ivar = opaque {
+    // extern "C" fn ivar_getName() void;
+    // extern "C" fn ivar_getTypeEncoding() void;
+    // extern "C" fn ivar_getOffset() void;
+};
 
 pub const objc_property_t = ?*objc_property;
 pub const objc_property_t_Nonnull = *allowzero objc_property;
 pub const objc_property_t_Sentinel = @intToPtr(objc_property_t_Nonnull, 0);
-pub const objc_property = opaque {};
+pub const objc_property = opaque {
+    // extern "C" fn property_getName() void;
+    // extern "C" fn property_getAttributes() void;
+    // extern "C" fn property_copyAttributeValue() void;
+    // extern "C" fn property_copyAttributeList() void;
+};
 
 pub const Method = ?*objc_method;
 pub const Method_Nonnull = *allowzero objc_method;
 pub const Method_Sentinel = @intToPtr(Method_Nonnull, 0);
-pub const objc_method = opaque {};
+pub const objc_method = opaque {
+    // extern "C" fn method_invoke() void;
+    // extern "C" fn method_invoke_stret() void;
+    // extern "C" fn method_getName() void;
+    // extern "C" fn method_getImplementation() void;
+    // extern "C" fn method_getTypeEncoding() void;
+    // extern "C" fn method_copyReturnType() void;
+    // extern "C" fn method_copyArgumentType() void;
+    // extern "C" fn method_getReturnType() void;
+    // extern "C" fn method_getNumberOfArguments() void;
+    // extern "C" fn method_getArgumentType() void;
+    // extern "C" fn method_getDescription() void;
+    // extern "C" fn method_setImplementation() void;
+    // extern "C" fn method_exchangeImplementations() void;
+};
 
-pub const Protocol = opaque {};
+pub const SEL = *objc_selector;
+const objc_selector = opaque {
+    // extern "C" fn sel_getName() void;
+    // extern "C" fn sel_registerName() void;
+    // extern "C" fn sel_getUid() void;
+    // extern "C" fn sel_isEqual() void;
+};
+
+pub const Protocol = opaque {
+    // extern "C" fn protocol_addMethodDescription() void;
+    // extern "C" fn protocol_addProtocol() void;
+    // extern "C" fn protocol_addProperty() void;
+    // extern "C" fn protocol_getName() void;
+    // extern "C" fn protocol_isEqual() void;
+    // extern "C" fn protocol_copyMethodDescriptionList() void;
+    // extern "C" fn protocol_getMethodDescription() void;
+    // extern "C" fn protocol_copyPropertyList() void;
+    // extern "C" fn protocol_getProperty() void;
+    // extern "C" fn protocol_copyProtocolList() void;
+    // extern "C" fn protocol_conformsToProtocol() void;
+};
 pub const Protocol_Sentinel = @intToPtr(*allowzero Protocol, 0);
 
 test {
