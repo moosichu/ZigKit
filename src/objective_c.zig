@@ -296,8 +296,8 @@ pub const objc_class = opaque {
     extern "C" fn class_getMethodImplementation_stret(cls: Class, name: SEL) IMP; // TODO: wrapper
     extern "C" fn class_respondsToSelector(cls: Class, name: SEL) BOOL; // TODO: wrapper
     extern "C" fn class_addProtocol(cls: Class, protocol: *Protocol) BOOL; // TODO: wrapper
-    extern "C" fn class_addProperty(cls: Class, name: [*:0]const u8, attributes: [*:objc_property_t_Sentinel]const objc_property_t_Nonnull, attribute_count: c_uint) BOOL; // TODO: wrapper
-    extern "C" fn class_replaceProperty(cls: Class, name: [*:0]const u8, attributes: [*:objc_property_t_Sentinel]const objc_property_t_Nonnull, attribute_count: c_uint) void; // TODO: wrapper
+    extern "C" fn class_addProperty(cls: Class, name: [*:0]const u8, attributes: [*]const objc_property_attribute_t, attribute_count: c_uint) BOOL; // TODO: wrapper
+    extern "C" fn class_replaceProperty(cls: Class, name: [*:0]const u8, attributes: [*]const objc_property_attribute_t, attribute_count: c_uint) void; // TODO: wrapper
     extern "C" fn class_conformsToProtocol(cls: Class, protocol: *Protocol) BOOL; // TODO:wrapper
     extern "C" fn class_copyProtocolList(cls: Class, out_count: ?*c_uint) [*:Protocol_Sentinel]*allowzero Protocol; // TODO:wrapper
     extern "C" fn class_getVersion(cls: Class) c_int; // TODO:wrapper
@@ -449,7 +449,7 @@ const objects_to_init = block_name: {
 
         fn add(comptime value: UntypedInterface) void {
             comptime var new_objects_to_init: [count + 1]UntypedInterface = undefined;
-            for (values) |object_to_init, index| {
+            inline for (values) |object_to_init, index| {
                 new_objects_to_init[index] = object_to_init;
             }
             new_objects_to_init[count] = value;
@@ -476,6 +476,11 @@ pub fn deinitRuntime() void {
     }
 }
 
+pub const objc_property_attribute_t = extern struct {
+    name: [*:0]const u8,
+    value: [*:0]const u8,
+};
+
 pub const UntypedInterface = struct {
     interface_category: InterfaceCategory,
     name: [:0]const u8,
@@ -489,6 +494,15 @@ pub const UntypedInterface = struct {
             .internal => |internal_info| {
                 var superclass = lookUpClass(internal_info.superclass_name);
                 self.class_ptr.* = try allocateClassPair(superclass, self.name, 0);
+                for (internal_info.declaration.properties) |property| {
+                    // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtPropertyIntrospection.html#//apple_ref/doc/uid/TP40008048-CH101
+                    // See this!
+                    // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtPropertyIntrospection.html
+                    // https://stackoverflow.com/questions/7819092/how-can-i-add-properties-to-an-object-at-runtime
+                    const attributes = [_]objc_property_attribute_t{.{ .name = "", .value = "" }};
+                    // TODO: confirm result!
+                    _ = self.class_ptr.*.class_addProperty(property.name, &attributes, attributes.len);
+                }
             },
         }
     }
@@ -512,6 +526,7 @@ pub const InterfaceCategoryTag = enum {
 const InterfaceCategory = union(InterfaceCategoryTag) {
     internal: struct {
         superclass_name: [:0]const u8,
+        declaration: Declaration,
     },
     external,
 };
@@ -557,13 +572,28 @@ pub fn externInterface(comptime name: [:0]const u8) Interface(name, .external) {
     return .{};
 }
 
-pub fn interface(comptime name: [:0]const u8, comptime declaration: type, comptime Parent: type) Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name } }) {
-    _ = declaration;
-    Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name } }).register();
+pub fn interface(comptime name: [:0]const u8, comptime declaration: Declaration, comptime Parent: type) Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name, .declaration = declaration } }) {
+    const InterfaceType = Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name, .declaration = declaration } });
+    InterfaceType.register();
     return .{};
 }
 
-var MyClass = interface("MyClass", struct {}, NSObject.Type());
+const Property = struct {
+    const Type = enum {
+        int,
+        long,
+    };
+    type: Type,
+    name: [:0]const u8,
+};
+
+const Declaration = struct {
+    properties: []const Property,
+};
+
+var MyClass = interface("MyClass", .{
+    .properties = &[_]Property{.{ .type = .int, .name = "test_property" }},
+}, NSObject.Type());
 
 test "Objects" {
     try initRuntime();
