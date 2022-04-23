@@ -430,25 +430,58 @@ test "Nil tests" {
 //     comptime objects_to_init: []UntypedInterface = &.{},
 // };
 // var global_ref: GlobalRef = .{};
+// comptime var num_objects_to_init = 0;
+// See: https://github.com/ziglang/zig/issues/7396
+// https://stackoverflow.com/questions/68555025/global-comptime-var-in-zig
+
+const objects_to_init = block_name: {
+    comptime var count: comptime_int = 0;
+    comptime var values: []UntypedInterface = &.{};
+
+    const result = struct {
+        fn Values() []UntypedInterface {
+            return values;
+        }
+
+        fn add(comptime value: UntypedInterface) void {
+            comptime var new_objects_to_init: [count + 1]UntypedInterface = undefined;
+            for (values) |object_to_init, index| {
+                new_objects_to_init[index] = object_to_init;
+            }
+            new_objects_to_init[count] = value;
+            count += 1;
+            values = &new_objects_to_init;
+        }
+    };
+
+    break :block_name result;
+};
+// var objects_to_init: []UntypedInterface = &.{};
 
 var NSObject = externInterface("NSObject");
-comptime {
-    // NSObject.register();
-}
 
 pub fn initRuntime() !void {
-    // for (global_ref.objects_to_init) |object_to_init| {
-    //     object_to_init.initRuntime();
-    // }
-    try NSObject.initRuntime();
+    for (objects_to_init.Values()) |object_to_init| {
+        object_to_init.initRuntime();
+    }
+    // try NSObject.initRuntime();
 }
 
 pub const UntypedInterface = struct {
+    interface_category: InterfaceCategory,
     name: [:0]const u8,
     class_ptr: *Class,
 
     pub fn initRuntime(self: UntypedInterface) void {
-        self.class_ptr.* = lookUpClass(self.name);
+        switch (self.interface_category) {
+            .external => {
+                self.class_ptr.* = lookUpClass(self.name);
+            },
+            .internal => |internal_info| {
+                var superclass = lookUpClass(internal_info.superclass_name);
+                self.class_ptr.* = try allocateClassPair(superclass, self.name, 0);
+            },
+        }
     }
 };
 
@@ -469,23 +502,19 @@ pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceC
         const _interface_category: InterfaceCategory = interface_category;
         const _name: [:0]const u8 = name_arg;
         const _type: type = @This();
-        class: Class = Nil,
+        var _class: Class = Nil;
 
-        pub fn untypedInterface(self: *@This()) UntypedInterface {
+        pub fn untypedInterface() UntypedInterface {
             return .{
+                .interface_category = _interface_category,
                 .name = _name,
-                .class_ptr = &self.class,
+                .class_ptr = &_class,
             };
         }
 
         pub fn initRuntime(self: *@This()) !void {
-            switch (_interface_category) {
-                .external => self.class = lookUpClass(_name),
-                .internal => |internal_info| {
-                    var superclass = lookUpClass(internal_info.superclass_name);
-                    self.class = try allocateClassPair(superclass, _name, 0);
-                },
-            }
+            _ = self;
+            untypedInterface().initRuntime();
         }
 
         pub fn Type(comptime self: *@This()) type {
@@ -493,24 +522,25 @@ pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceC
             return _type;
         }
 
-        pub fn register(comptime self: *@This()) void {
+        pub fn class(self: @This()) Class {
             _ = self;
-            // comptime var new_objects_to_init: [global_ref.objects_to_init.len + 1]UntypedInterface = undefined;
-            // inline for (global_ref.objects_to_init) |object_to_init, index| {
-            //     new_objects_to_init[index] = object_to_init;
-            // }
-            // new_objects_to_init[global_ref.objects_to_init.len] = self.untypedInterface();
-            // global_ref.objects_to_init = &new_objects_to_init;
+            return _class;
+        }
+
+        pub fn register() void {
+            objects_to_init.add(comptime untypedInterface());
         }
     };
 }
 
 pub fn externInterface(comptime name: [:0]const u8) Interface(name, .external) {
+    Interface(name, .external).register();
     return .{};
 }
 
 pub fn interface(comptime name: [:0]const u8, comptime declaration: type, comptime Parent: type) Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name } }) {
     _ = declaration;
+    Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name } }).register();
     return .{};
 }
 
@@ -518,9 +548,11 @@ var MyClass = interface("MyClass", struct {}, NSObject.Type());
 
 test "Objects" {
     try initRuntime();
-    try MyClass.initRuntime();
+
+    // var instance = MyClass.createInstance();
+
     // const create
-    try testing.expect(NSObject.class != Nil);
-    try testing.expect(MyClass.class != Nil);
-    try testing.expect(MyClass.class.getSuperclass() == NSObject.class);
+    try testing.expect(NSObject.class() != Nil);
+    try testing.expect(MyClass.class() != Nil);
+    try testing.expect(MyClass.class().getSuperclass() == NSObject.class());
 }
