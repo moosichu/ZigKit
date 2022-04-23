@@ -20,6 +20,9 @@ pub const SEL = *objc_selector;
 const objc_selector = opaque {};
 pub const IMP = getFunctionPointer(fn (id, SEL, ...) callconv(.C) id);
 
+pub const type_encoding = [:0]const u8;
+pub const type_encoding_ptr = ?[*:0]const u8;
+
 fn encodeSize(comptime objc_type: type, indirection: comptime_int) comptime_int {
     const type_info = @typeInfo(objc_type);
     switch (type_info) {
@@ -149,8 +152,16 @@ fn encodeInternal(comptime objc_type: type, indirection: comptime_int) [:0]const
 
 /// Encode a type as an objective-c type string
 /// See: https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtTypeEncodings.html#//apple_ref/doc/uid/TP40008048-CH100
-pub fn encode(comptime objc_type: type) [:0]const u8 {
+pub fn encode(comptime objc_type: type) type_encoding {
     return encodeInternal(objc_type, 0);
+}
+
+const Interface = struct {};
+
+pub fn interface(comptime declaration: type, comptime parent: Interface) Interface {
+    _ = declaration;
+    _ = parent;
+    unreachable;
 }
 
 pub const Class = *allowzero objc_class;
@@ -209,26 +220,24 @@ pub const objc_class = opaque {
     extern "C" fn class_getWeakIvarLayout(cls: Class) [*]const u8; // TODO: proper return type & wrapper
     extern "C" fn class_setWeakIvarLayout(cls: Class, [*]const u8) void; // TODO: proper return type & wrapper
     extern "C" fn class_getProperty(cls: Class, name: [*:0]const u8) objc_property_t;
-    extern "C" fn class_copyPropertyList(cls: Class, out_count: *c_uint) ?[*:objc_property_t_sentinel]objc_property_t_Nonnull;
-    extern "C" fn class_addMethod(cls: Class, name: SEL, imp: IMP, types: ?[*:0]u8) BOOL;
+    extern "C" fn class_copyPropertyList(cls: Class, out_count: *c_uint) ?[*:objc_property_t_Sentinel]objc_property_t_Nonnull;
+    extern "C" fn class_addMethod(cls: Class, name: SEL, imp: IMP, types: type_encoding_ptr) BOOL; // TODO: wrapper
+    extern "C" fn class_getInstanceMethod(cls: Class, name: SEL) Method; // TODO: wrapper
+    extern "C" fn class_getClassMethod(cls: Class, name: SEL) Method; // TODO: wrapper
+    extern "C" fn class_copyMethodList(cls: Class, out_count: ?*c_uint) ?[*:Method_Sentinel]Method_Nonnull; // TODO: wrapper
+    extern "C" fn class_replaceMethod(cls: Class, name: SEL, imp: IMP, types: type_encoding_ptr) IMP; // TODO: wrapper
+    extern "C" fn class_getMethodImplementation(cls: Class, name: SEL) IMP; // TODO: wrapper
+    extern "C" fn class_getMethodImplementation_stret(cls: Class, name: SEL) IMP; // TODO: wrapper
+    extern "C" fn class_respondsToSelector(cls: Class, name: SEL) BOOL; // TODO: wrapper
+    extern "C" fn class_addProtocol(cls: Class, protocol: *Protocol) BOOL; // TODO: wrapper
+    extern "C" fn class_addProperty(cls: Class, name: [*:0]const u8, attributes: [*:objc_property_t_Sentinel]const objc_property_t_Nonnull, attribute_count: c_uint) BOOL; // TODO: wrapper
+    extern "C" fn class_replaceProperty(cls: Class, name: [*:0]const u8, attributes: [*:objc_property_t_Sentinel]const objc_property_t_Nonnull, attribute_count: c_uint) void; // TODO: wrapper
+    extern "C" fn class_conformsToProtocol(cls: Class, protocol: *Protocol) BOOL; // TODO:wrapper
+    extern "C" fn class_copyProtocolList(cls: Class, out_count: ?*c_uint) [*:Protocol_Sentinel]*allowzero Protocol; // TODO:wrapper
+    extern "C" fn class_getVersion(cls: Class) c_int; // TODO:wrapper
+    extern "C" fn class_setVersion(cls: Class, version: c_int) void; // TODO:wrapper
 
-    // TODO;
-    // extern "C" fn class_getInstanceMethod
-    // extern "C" fn class_getClassMethod
-    // extern "C" fn class_copyMethodList
-    // extern "C" fn class_replaceMethod
-    // extern "C" fn class_getMethodImplementation
-    // extern "C" fn class_getMethodImplementation_stret
-    // extern "C" fn class_respondsToSelector
-    // extern "C" fn class_addProtocol
-    // extern "C" fn class_addProperty
-    // extern "C" fn class_replaceProperty
-    // extern "C" fn class_conformsToProtocol
-    // extern "C" fn class_copyProtocolList
-    // extern "C" fn class_getVersion
-    // extern "C" fn class_setVersion
-
-    extern "C" fn class_createInstance(cls: Class, extra_bytes: usize) id;
+    extern "C" fn class_createInstance(cls: Class, extra_bytes: usize) id; // TODO:wrapper
 };
 
 pub const id = *allowzero objc_object;
@@ -249,6 +258,9 @@ pub const objc_object = extern struct {
         return objc_destructInstance(obj);
     }
 
+    extern "C" fn objc_getFutureClass(name: ?[*:0]const u8) Class;
+    extern "C" fn objc_setFutureClass(cls: Class, name: ?[*:0]const u8) void;
+
     extern "C" fn objc_constructInstance(cls: Class, bytes: *anyopaque) id;
     extern "C" fn objc_destructInstance(obj: id) *anyopaque;
 };
@@ -259,8 +271,16 @@ pub const objc_ivar = opaque {};
 
 pub const objc_property_t = ?*objc_property;
 pub const objc_property_t_Nonnull = *allowzero objc_property;
-pub const objc_property_t_sentinel = @intToPtr(objc_property_t_Nonnull, 0);
+pub const objc_property_t_Sentinel = @intToPtr(objc_property_t_Nonnull, 0);
 pub const objc_property = opaque {};
+
+pub const Method = ?*objc_method;
+pub const Method_Nonnull = *allowzero objc_method;
+pub const Method_Sentinel = @intToPtr(Method_Nonnull, 0);
+pub const objc_method = opaque {};
+
+pub const Protocol = opaque {};
+pub const Protocol_Sentinel = @intToPtr(*allowzero Protocol, 0);
 
 test {
     _ = testing.refAllDecls(@This());
