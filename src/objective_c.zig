@@ -166,6 +166,10 @@ pub fn allocateClassPair(superclass: Class, name: [*:0]const u8, extra_bytes: us
     return objc_allocateClassPair(superclass, name, extra_bytes);
 }
 
+pub fn disposeClassPair(cls: Class) void {
+    return objc_disposeClassPair(cls);
+}
+
 // Note: no need for wrappers as these "shouldn't" be called anyway
 extern "C" fn objc_getFutureClass(name: ?[*:0]const u8) Class;
 extern "C" fn objc_setFutureClass(cls: Class, name: ?[*:0]const u8) void;
@@ -462,9 +466,14 @@ var NSObject = externInterface("NSObject");
 
 pub fn initRuntime() !void {
     for (objects_to_init.Values()) |object_to_init| {
-        object_to_init.initRuntime();
+        try object_to_init.initRuntime();
     }
-    // try NSObject.initRuntime();
+}
+
+pub fn deinitRuntime() void {
+    for (objects_to_init.Values()) |object_to_init| {
+        object_to_init.deinitRuntime();
+    }
 }
 
 pub const UntypedInterface = struct {
@@ -472,7 +481,7 @@ pub const UntypedInterface = struct {
     name: [:0]const u8,
     class_ptr: *Class,
 
-    pub fn initRuntime(self: UntypedInterface) void {
+    pub fn initRuntime(self: UntypedInterface) !void {
         switch (self.interface_category) {
             .external => {
                 self.class_ptr.* = lookUpClass(self.name);
@@ -480,6 +489,16 @@ pub const UntypedInterface = struct {
             .internal => |internal_info| {
                 var superclass = lookUpClass(internal_info.superclass_name);
                 self.class_ptr.* = try allocateClassPair(superclass, self.name, 0);
+            },
+        }
+    }
+
+    pub fn deinitRuntime(self: UntypedInterface) void {
+        switch (self.interface_category) {
+            .external => {},
+            .internal => {
+                disposeClassPair(self.class_ptr.*);
+                self.class_ptr.* = Nil;
             },
         }
     }
@@ -548,10 +567,7 @@ var MyClass = interface("MyClass", struct {}, NSObject.Type());
 
 test "Objects" {
     try initRuntime();
-
-    // var instance = MyClass.createInstance();
-
-    // const create
+    defer deinitRuntime();
     try testing.expect(NSObject.class() != Nil);
     try testing.expect(MyClass.class() != Nil);
     try testing.expect(MyClass.class().getSuperclass() == NSObject.class());
