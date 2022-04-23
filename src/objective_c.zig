@@ -460,9 +460,8 @@ const objects_to_init = block_name: {
 
     break :block_name result;
 };
-// var objects_to_init: []UntypedInterface = &.{};
 
-var NSObject = externInterface("NSObject");
+const NSObject = externInterface("NSObject");
 
 pub fn initRuntime() !void {
     for (objects_to_init.Values()) |object_to_init| {
@@ -551,7 +550,7 @@ pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceC
             untypedInterface().initRuntime();
         }
 
-        pub fn Type(comptime self: *@This()) type {
+        pub fn Type(comptime self: *const @This()) type {
             _ = self;
             return _type;
         }
@@ -591,7 +590,7 @@ const Declaration = struct {
     properties: []const Property,
 };
 
-var MyClass = interface("MyClass", .{
+const MyClass = interface("MyClass", .{
     .properties = &[_]Property{.{ .type = .int, .name = "test_property" }},
 }, NSObject.Type());
 
