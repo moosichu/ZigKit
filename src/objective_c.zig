@@ -472,7 +472,7 @@ const objects_to_init = block_name: {
     break :block_name result;
 };
 
-const NSObject = externInterface("NSObject");
+const NSObject = externInterface("NSObject", .{});
 
 pub fn initRuntime() !void {
     for (objects_to_init.Values()) |object_to_init| {
@@ -495,6 +495,7 @@ pub const UntypedInterface = struct {
     interface_category: InterfaceCategory,
     name: [:0]const u8,
     class_ptr: *Class,
+    declaration: Declaration,
 
     pub fn initRuntime(self: UntypedInterface) !void {
         switch (self.interface_category) {
@@ -504,7 +505,7 @@ pub const UntypedInterface = struct {
             .internal => |internal_info| {
                 var superclass = lookUpClass(internal_info.superclass_name);
                 self.class_ptr.* = try allocateClassPair(superclass, self.name, 0);
-                for (internal_info.declaration.properties) |property| {
+                for (self.declaration.properties) |property| {
                     // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtPropertyIntrospection.html#//apple_ref/doc/uid/TP40008048-CH101
                     // See this!
                     // https://developer.apple.com/library/archive/documentation/Cocoa/Conceptual/ObjCRuntimeGuide/Articles/ocrtPropertyIntrospection.html
@@ -536,35 +537,32 @@ pub const InterfaceCategoryTag = enum {
 const InterfaceCategory = union(InterfaceCategoryTag) {
     internal: struct {
         superclass_name: [:0]const u8,
-        declaration: Declaration,
     },
     external,
 };
 
-pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceCategory) type {
-    const InitialInstanceType = struct {
+pub fn Interface(comptime class_name: [:0]const u8, comptime declaration: Declaration, comptime interface_category: InterfaceCategory) type {
+    const InstanceType = struct {
         obj: id,
-    };
-    const InstanceType = @Type(@typeInfo(InitialInstanceType));
 
-    const MethodDeclarations = struct {
-        pub fn dispose(instance: InstanceType) void {
-            instance.obj.dispose();
+        pub fn getProperty(self: @This(), comptime name: [:0]const u8) declaration.getType(name, class_name) {
+            const ReturnType = declaration.getType(name, class_name);
+            const result: ReturnType = undefined;
+            // TODO: extract property value from objective c runtime.
+            _ = self;
+            return result;
+        }
+
+        pub fn dispose(self: *@This()) void {
+            self.obj.dispose();
         }
     };
 
-    const InitialInstanceMethods = struct {
-        dispose: @TypeOf(MethodDeclarations.dispose) = MethodDeclarations.dispose,
-    };
-
-    const InstanceMethods = @Type(@typeInfo(InitialInstanceMethods));
-
     return struct {
         const _interface_category: InterfaceCategory = interface_category;
-        const _name: [:0]const u8 = name_arg;
+        const _name: [:0]const u8 = class_name;
         const _type: type = @This();
         const _instance_type = InstanceType;
-        const _methods = InstanceMethods;
         var _class: Class = Nil;
 
         pub fn untypedInterface() UntypedInterface {
@@ -572,6 +570,7 @@ pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceC
                 .interface_category = _interface_category,
                 .name = _name,
                 .class_ptr = &_class,
+                .declaration = declaration,
             };
         }
 
@@ -583,11 +582,6 @@ pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceC
         pub fn Type(comptime self: *const @This()) type {
             _ = self;
             return _type;
-        }
-
-        pub fn Methods(comptime self: *const @This()) InstanceMethods {
-            _ = self;
-            return .{};
         }
 
         pub fn class(self: @This()) Class {
@@ -610,13 +604,13 @@ pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceC
     };
 }
 
-pub fn externInterface(comptime name: [:0]const u8) Interface(name, .external) {
-    Interface(name, .external).register();
+pub fn externInterface(comptime name: [:0]const u8, comptime declaration: Declaration) Interface(name, declaration, .external) {
+    Interface(name, declaration, .external).register();
     return .{};
 }
 
-pub fn interface(comptime name: [:0]const u8, comptime declaration: Declaration, comptime Parent: type) Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name, .declaration = declaration } }) {
-    const InterfaceType = Interface(name, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name, .declaration = declaration } });
+pub fn interface(comptime name: [:0]const u8, comptime declaration: Declaration, comptime Parent: type) Interface(name, declaration, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name } }) {
+    const InterfaceType = Interface(name, declaration, InterfaceCategory{ .internal = .{ .superclass_name = Parent._name } });
     InterfaceType.register();
     return .{};
 }
@@ -637,13 +631,29 @@ const Property = struct {
     const Type = enum {
         int,
         long,
+
+        pub fn Actual(comptime self: Type) type {
+            return switch (self) {
+                .int => c_int,
+                .long => c_long,
+            };
+        }
     };
     type: Type,
     name: [:0]const u8,
 };
 
 const Declaration = struct {
-    properties: []const Property,
+    properties: []const Property = &[_]Property{},
+
+    pub fn getType(comptime declaration: @This(), comptime name: [:0]const u8, comptime class_name: [:0]const u8) type {
+        for (declaration.properties) |property| {
+            if (std.mem.eql(u8, property.name, name)) {
+                return property.type.Actual();
+            }
+        }
+        @compileError("'" ++ name ++ "' isn't a property of '" ++ class_name ++ "'");
+    }
 };
 
 const MyClass = interface("MyClass", .{
@@ -659,8 +669,28 @@ test "Objects" {
     try testing.expect(MyClass.class().getSuperclass() == NSObject.class());
 
     // TODO use @Type to convert construct test_property structs to collection of structs
-    const myInstance = try MyClass.createInstance();
-    defer MyClass.Methods().dispose(myInstance);
+    var myInstance = try MyClass.createInstance();
+    defer myInstance.dispose();
+    {
+        // Works!
+        const property_value: c_int = myInstance.getProperty("test_property");
+        _ = property_value;
+    }
+    // {
+    //     // Type error!
+    //     // ./src/objective_c.zig:681:58: error: expected type 'u8', found 'c_int'
+    //     //    const property_value: u8 = myInstance.getProperty("test_property");
+    //     const property_value: u8 = myInstance.getProperty("test_property");
+    //     _ = property_value;
+    // }
+    // {
+    //     // Does not exist error!
+    //     // TODO: can we get the error to appear in more relevant place?
+    //     // ./src/objective_c.zig:655:9: error: 'property_does_not_exist' isn't a property of 'MyClass'
+    //     //      @compileError("'" ++ name ++ "' isn't a property of '" ++ class_name ++ "'");
+    //     const property_value: c_int = myInstance.getProperty("property_does_not_exist");
+    //     _ = property_value;
+    // }
 
     // const test_property = myInstance.test_property.get();
 }
