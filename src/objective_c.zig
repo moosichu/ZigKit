@@ -273,6 +273,12 @@ pub const objc_class = opaque {
         return objc_constructInstance(cls, @ptrCast(*anyopaque, bytes));
     }
 
+    pub fn createInstance(cls: Class, extra_bytes: usize) !id {
+        const result = class_createInstance(cls, extra_bytes);
+        if (result == nil) return error.Fail;
+        return result;
+    }
+
     extern "C" fn class_getName(cls: Class) [*:0]const u8;
     extern "C" fn class_getSuperclass(cls: Class) Class;
     extern "C" fn class_isMetaClass(cls: Class) BOOL;
@@ -315,8 +321,13 @@ pub const objc_object = extern struct {
         return objc_destructInstance(obj);
     }
 
+    pub fn dispose(obj: id) void {
+        // always returns nil, so can ignore it!
+        _ = object_dispose(obj);
+    }
+
     // extern "C" fn object_copy() void;
-    // extern "C" fn object_dispose() void;
+    extern "C" fn object_dispose(obj: id) id;
     // extern "C" fn object_setInstanceVariable() void;
     // extern "C" fn object_getInstanceVariable() void;
     // extern "C" fn object_getIndexedIvars() void;
@@ -531,10 +542,29 @@ const InterfaceCategory = union(InterfaceCategoryTag) {
 };
 
 pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceCategory) type {
+    const InitialInstanceType = struct {
+        obj: id,
+    };
+    const InstanceType = @Type(@typeInfo(InitialInstanceType));
+
+    const MethodDeclarations = struct {
+        pub fn dispose(instance: InstanceType) void {
+            instance.obj.dispose();
+        }
+    };
+
+    const InitialInstanceMethods = struct {
+        dispose: @TypeOf(MethodDeclarations.dispose) = MethodDeclarations.dispose,
+    };
+
+    const InstanceMethods = @Type(@typeInfo(InitialInstanceMethods));
+
     return struct {
         const _interface_category: InterfaceCategory = interface_category;
         const _name: [:0]const u8 = name_arg;
         const _type: type = @This();
+        const _instance_type = InstanceType;
+        const _methods = InstanceMethods;
         var _class: Class = Nil;
 
         pub fn untypedInterface() UntypedInterface {
@@ -555,6 +585,11 @@ pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceC
             return _type;
         }
 
+        pub fn Methods(comptime self: *const @This()) InstanceMethods {
+            _ = self;
+            return .{};
+        }
+
         pub fn class(self: @This()) Class {
             _ = self;
             return _class;
@@ -562,6 +597,15 @@ pub fn Interface(comptime name_arg: [:0]const u8, interface_category: InterfaceC
 
         pub fn register() void {
             objects_to_init.add(comptime untypedInterface());
+        }
+
+        // TODO: make this strongly typed!
+        pub fn createInstance(self: @This()) !InstanceType {
+            _ = self;
+            const obj = try _class.createInstance(0);
+            return InstanceType{
+                .obj = obj,
+            };
         }
     };
 }
@@ -576,6 +620,18 @@ pub fn interface(comptime name: [:0]const u8, comptime declaration: Declaration,
     InterfaceType.register();
     return .{};
 }
+
+// fn PropertyWrapper(parent_type: type, wrapped_type: type) type {
+//     // fieldParentPtr!
+//     return struct {
+//         pub fn get() wrapped_type {
+//             unreachable;
+//         }
+//         pub fn set(value: wrapped_type) void {
+//             unreachable;
+//         }
+//     };
+// }
 
 const Property = struct {
     const Type = enum {
@@ -599,5 +655,12 @@ test "Objects" {
     defer deinitRuntime();
     try testing.expect(NSObject.class() != Nil);
     try testing.expect(MyClass.class() != Nil);
+    try testing.expect(MyClass.class() != NSObject.class());
     try testing.expect(MyClass.class().getSuperclass() == NSObject.class());
+
+    // TODO use @Type to convert construct test_property structs to collection of structs
+    const myInstance = try MyClass.createInstance();
+    defer MyClass.Methods().dispose(myInstance);
+
+    // const test_property = myInstance.test_property.get();
 }
